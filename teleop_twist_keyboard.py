@@ -33,16 +33,14 @@
 
 import sys
 import threading
-
+from collections import deque
 import geometry_msgs.msg
 import rclpy
-
 if sys.platform == 'win32':
     import msvcrt
 else:
     import termios
     import tty
-
 
 msg = """
 This node takes keypresses from the keyboard and publishes them
@@ -70,7 +68,7 @@ e/c : increase/decrease only angular speed by 10%
 
 CTRL-C to quit
 """
-
+window_size = 5
 moveBindings = {
     'i': (1, 0, 0, 0),
     'o': (1, 0, 0, -1),
@@ -129,6 +127,9 @@ def restoreTerminalSettings(old_settings):
 def vels(speed, turn):
     return 'currently:\tspeed %s\tturn %s ' % (speed, turn)
 
+def moving_avg(buffer,nval):
+    buffer.append(nval)
+    return sum(buffer)/5
 
 def main():
     settings = saveTerminalSettings()
@@ -147,7 +148,7 @@ def main():
         TwistMsg = geometry_msgs.msg.TwistStamped
     else:
         TwistMsg = geometry_msgs.msg.Twist
-
+    
     pub = node.create_publisher(TwistMsg, 'cmd_vel', 10)
 
     spinner = threading.Thread(target=rclpy.spin, args=(node,))
@@ -160,7 +161,8 @@ def main():
     z = 0.0
     th = 0.0
     status = 0.0
-
+    speed_buffer = deque(maxlen=window_size)
+    turn_buffer = deque(maxlen=window_size)
     twist_msg = TwistMsg()
 
     if stamped:
@@ -195,16 +197,17 @@ def main():
                 th = 0.0
                 if (key == '\x03'):
                     break
-
+            avg_speed = moving_avg(speed_buffer,x*speed)
+            avg_turn = moving_avg(turn_buffer, th * turn)
             if stamped:
                 twist_msg.header.stamp = node.get_clock().now().to_msg()
 
-            twist.linear.x = x * speed
+            twist.linear.x = avg_speed
             twist.linear.y = y * speed
             twist.linear.z = z * speed
             twist.angular.x = 0.0
             twist.angular.y = 0.0
-            twist.angular.z = th * turn
+            twist.angular.z = avg_turn
             pub.publish(twist_msg)
 
     except Exception as e:
